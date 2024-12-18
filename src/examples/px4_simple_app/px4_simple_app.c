@@ -33,9 +33,9 @@
 
 /**
  * @file px4_simple_app.c
- * Minimal application example for PX4 autopilot
+ * Spraying Simulator Debug App
  *
- * @author Example User <mail@example.com>
+ * @author Y. Caglar <yilmaz.caglar@tubitak.gov.tr>
  */
 
 #include <px4_platform_common/px4_config.h>
@@ -49,82 +49,72 @@
 #include <math.h>
 
 #include <uORB/uORB.h>
-#include <uORB/topics/vehicle_acceleration.h>
-#include <uORB/topics/vehicle_attitude.h>
+#include <uORB/topics/actuator_outputs.h>
+#include <uORB/topics/debug_key_value.h>
 
 __EXPORT int px4_simple_app_main(int argc, char *argv[]);
 
+static float s(float a, float b);
+
 int px4_simple_app_main(int argc, char *argv[])
 {
-	PX4_INFO("Hello Sky!");
+    PX4_INFO("Init...");
 
-	/* subscribe to vehicle_acceleration topic */
-	int sensor_sub_fd = orb_subscribe(ORB_ID(vehicle_acceleration));
-	/* limit the update rate to 5 Hz */
-	orb_set_interval(sensor_sub_fd, 200);
+    int x = orb_subscribe(ORB_ID(actuator_outputs));
+    orb_set_interval(x, 100);
 
-	/* advertise attitude topic */
-	struct vehicle_attitude_s att;
-	memset(&att, 0, sizeof(att));
-	orb_advert_t att_pub = orb_advertise(ORB_ID(vehicle_attitude), &att);
+    struct debug_key_value_s y;
+    memset(&y, 0, sizeof(y));
+    orb_advert_t z = orb_advertise(ORB_ID(debug_key_value), &y);
 
-	/* one could wait for multiple topics with this technique, just using one here */
-	px4_pollfd_struct_t fds[] = {
-		{ .fd = sensor_sub_fd,   .events = POLLIN },
-		/* there could be more file descriptors here, in the form like:
-		 * { .fd = other_sub_fd,   .events = POLLIN },
-		 */
-	};
+    float a = 10000.0f;
+    float b = 0.1f;
+    int c = 0;
 
-	int error_counter = 0;
+    while (true) {
+        usleep(100000);
 
-	for (int i = 0; i < 5; i++) {
-		/* wait for sensor update of 1 file descriptor for 1000 ms (1 second) */
-		int poll_ret = px4_poll(fds, 1, 1000);
+        struct actuator_outputs_s d;
+        if (orb_copy(ORB_ID(actuator_outputs), x, &d) == PX4_OK) {
+            float e = d.output[4];
+            float f = d.output[5];
 
-		/* handle the poll result */
-		if (poll_ret == 0) {
-			/* this means none of our providers is giving us data */
-			PX4_ERR("Got no data within a second");
+            float g = (e >= 0.0f) ? s(e, b) : 0.0f;
+            float h = (f >= 0.0f) ? s(f, b) : 0.0f;
 
-		} else if (poll_ret < 0) {
-			/* this is seriously bad - should be an emergency */
-			if (error_counter < 10 || error_counter % 50 == 0) {
-				/* use a counter to prevent flooding (and slowing us down) */
-				PX4_ERR("ERROR return value from poll(): %d", poll_ret);
-			}
+            float i = g + h;
+            float j = i * b;
 
-			error_counter++;
+            a = fmaxf(a - j, 0.0f);
 
-		} else {
+            if (c == 0) {
+                y.value = a;
+                memcpy(&y.key, "WH", 2);
+            } else {
+                y.value = i;
+                memcpy(&y.key, "FM", 2);
+            }
 
-			if (fds[0].revents & POLLIN) {
-				/* obtained data for the first file descriptor */
-				struct vehicle_acceleration_s accel;
-				/* copy sensors raw data into local buffer */
-				orb_copy(ORB_ID(vehicle_acceleration), sensor_sub_fd, &accel);
-				PX4_INFO("Accelerometer:\t%8.4f\t%8.4f\t%8.4f",
-					 (double)accel.xyz[0],
-					 (double)accel.xyz[1],
-					 (double)accel.xyz[2]);
+            orb_publish(ORB_ID(debug_key_value), z, &y);
+            c = 1 - c;
+        }
+    }
 
-				/* set att and publish this information for other apps
-				 the following does not have any meaning, it's just an example
-				*/
-				att.q[0] = accel.xyz[0];
-				att.q[1] = accel.xyz[1];
-				att.q[2] = accel.xyz[2];
+    PX4_INFO("Exit.");
+    return 0;
+}
 
-				orb_publish(ORB_ID(vehicle_attitude), att_pub, &att);
-			}
+static float s(float a, float b)
+{
+    float c = 0.0f;
 
-			/* there could be more file descriptors here, in the form like:
-			 * if (fds[1..n].revents & POLLIN) {}
-			 */
-		}
-	}
+    if (a < 0.4f) {
+        c = 51.5f * (a / 0.4f);
+    } else if (a > 0.85f) {
+        c = 67.212f + (12.788f * ((a - 0.85f) / 0.15f));
+    } else {
+        c = -0.56295f * a * a + 37.7622f * a + 36.5212f;
+    }
 
-	PX4_INFO("exiting");
-
-	return 0;
+    return c;
 }
