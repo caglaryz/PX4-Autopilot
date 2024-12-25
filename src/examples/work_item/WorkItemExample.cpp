@@ -23,11 +23,10 @@
  * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
  * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
  * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
- * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
- * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
- * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+ * TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+ * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  ****************************************************************************/
 
@@ -35,7 +34,8 @@
 
 WorkItemExample::WorkItemExample() :
 	ModuleParams(nullptr),
-	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::test1)
+	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::test1),
+	_actuator_outputs_sub(this, ORB_ID(actuator_outputs)) // Initialize the subscription
 {
 }
 
@@ -47,14 +47,7 @@ WorkItemExample::~WorkItemExample()
 
 bool WorkItemExample::init()
 {
-	// execute Run() on every sensor_accel publication
-	if (!_sensor_accel_sub.registerCallback()) {
-		PX4_ERR("callback registration failed");
-		return false;
-	}
-
-	// alternatively, Run on fixed interval
-	// ScheduleOnInterval(5000_us); // 2000 us interval, 200 Hz rate
+	ScheduleOnInterval(100000); // 2000 us interval, 200 Hz rate
 
 	return true;
 }
@@ -70,61 +63,49 @@ void WorkItemExample::Run()
 	perf_begin(_loop_perf);
 	perf_count(_loop_interval_perf);
 
-	// Check if parameters have changed
-	if (_parameter_update_sub.updated()) {
-		// clear update
-		parameter_update_s param_update;
-		_parameter_update_sub.copy(&param_update);
-		updateParams(); // update module parameters (in DEFINE_PARAMETERS)
-	}
+	actuator_outputs_s actuator_outputs;
+	if (_actuator_outputs_sub.copy(&actuator_outputs)) {
+		float actuator5 = (_liquid_volume > 0.0f) ? 2 * actuator_outputs.output[4] : 0.0f;
+		float actuator6 = (_liquid_volume > 0.0f) ? 2 * actuator_outputs.output[5] : 0.0f;
 
+		float flow_rate = calculate_flow_rate(actuator5) + calculate_flow_rate(actuator6);
+		float dispensed_volume = flow_rate * _timestep;
+		_liquid_volume = fmaxf(_liquid_volume - dispensed_volume, 0.0f);
 
-	// Example
-	//  update vehicle_status to check arming state
-	if (_vehicle_status_sub.updated()) {
-		vehicle_status_s vehicle_status;
-
-		if (_vehicle_status_sub.copy(&vehicle_status)) {
-
-			const bool armed = (vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED);
-
-			if (armed && !_armed) {
-				PX4_WARN("vehicle armed due to %d", vehicle_status.latest_arming_reason);
-
-			} else if (!armed && _armed) {
-				PX4_INFO("vehicle disarmed due to %d", vehicle_status.latest_disarming_reason);
-			}
-
-			_armed = armed;
+		debug_key_value_s debug_data{};
+		debug_data.timestamp = hrt_absolute_time();
+		if (_state_machine == 0) {
+			debug_data.value = _liquid_volume;
+			memcpy(debug_data.key, "WH", 2);
+			_state_machine = 1;
+		} else {
+			debug_data.value = flow_rate;
+			memcpy(debug_data.key, "FM", 2);
+			_state_machine = 0;
 		}
+		_debug_key_value_pub.publish(debug_data);
 	}
-
-
-	// Example
-	//  grab latest accelerometer data
-	if (_sensor_accel_sub.updated()) {
-		sensor_accel_s accel;
-
-		if (_sensor_accel_sub.copy(&accel)) {
-			// DO WORK
-
-			// access parameter value (SYS_AUTOSTART)
-			if (_param_sys_autostart.get() == 1234) {
-				// do something if SYS_AUTOSTART is 1234
-			}
-		}
-	}
-
-
-	// Example
-	//  publish some data
-	orb_test_s data{};
-	data.val = 314159;
-	data.timestamp = hrt_absolute_time();
-	_orb_test_pub.publish(data);
-
 
 	perf_end(_loop_perf);
+}
+
+float WorkItemExample::calculate_flow_rate(float actuator_value)
+{
+	float flow_rate = 0.0f;
+	if (actuator_value > 1000.0f && actuator_value <= 1200.0f) {
+		flow_rate = 30.0f * ((actuator_value - 1000.0f) / 200.0f);
+	} else if (actuator_value > 1200.0f && actuator_value <= 1400.0f) {
+		flow_rate = 51.5f + (30.0f - 51.5f) * ((1400.0f - actuator_value) / 200.0f);
+	} else if (actuator_value > 1400.0f && actuator_value <= 1850.0f) {
+		float h = -2.78e-6f;
+		float i = 0.0917f;
+		float j = -86.41f;
+		flow_rate = h * actuator_value * actuator_value + i * actuator_value + j;
+	} else if (actuator_value > 1850.0f && actuator_value <= 2000.0f) {
+		flow_rate = 67.212f + (80.0f - 67.212f) * ((actuator_value - 1850.0f) / 150.0f);
+	}
+
+	return flow_rate;
 }
 
 int WorkItemExample::task_spawn(int argc, char *argv[])
@@ -138,7 +119,6 @@ int WorkItemExample::task_spawn(int argc, char *argv[])
 		if (instance->init()) {
 			return PX4_OK;
 		}
-
 	} else {
 		PX4_ERR("alloc failed");
 	}
@@ -171,8 +151,7 @@ int WorkItemExample::print_usage(const char *reason)
 	PRINT_MODULE_DESCRIPTION(
 		R"DESCR_STR(
 ### Description
-Example of a simple module running out of a work queue.
-
+Module for simulating liquid spraying and flow rate calculations.
 )DESCR_STR");
 
 	PRINT_MODULE_USAGE_NAME("work_item_example", "template");
