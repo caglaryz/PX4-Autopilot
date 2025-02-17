@@ -95,6 +95,7 @@ set(msg_files
 	FailsafeFlags.msg
 	FailureDetectorStatus.msg
 	FlightPhaseEstimation.msg
+	FlowrateRaw.msg
 	FollowTarget.msg
 	FollowTargetEstimator.msg
 	FollowTargetStatus.msg
@@ -261,6 +262,7 @@ set(msg_files
 	VehicleTrajectoryWaypoint.msg
 	VelocityLimits.msg
 	VtolVehicleStatus.msg
+	WeightRaw.msg
 	WheelEncoders.msg
 	Wind.msg
 	YawEstimatorStatus.msg

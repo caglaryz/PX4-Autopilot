@@ -26,23 +26,40 @@ int UavcanDebugKeyValueBridge::init() {
     return 0;
 }
 
-// This is the callback function which is going to be called whenever we receive a Debug Key Value frame
 void UavcanDebugKeyValueBridge::key_value_sub_cb(const uavcan::ReceivedDataStructure<uavcan::protocol::debug::KeyValue> &msg) {
-	auto report = ::debug_key_value_s();
+    uint8_t node_id = msg.getSrcNodeID().get();
 
-	report.timestamp = hrt_absolute_time();
+    auto report = debug_key_value_s();
+    report.timestamp = hrt_absolute_time();
+    memset(report.key, 0, sizeof(report.key));  // Null terminate
 
-	memset(report.key, 0, sizeof(report.key)); // Null terminate
+    // Extract first 3 characters
+    for (int i = 0; i < 3; ++i) {
+        report.key[i] = static_cast<char>(msg.key[i]);
+    }
+    report.value = msg.value;
 
-	// Since we will only deal with 3 ASCII characters we exclude the rest of key length.
-	// Will be fixed in the future.
-	for (int i=0; i < 3; ++i) { // i < sizeof(msg.key)
-		report.key[i] = static_cast<char>(msg.key[i]);
-	}
-	report.value = msg.value;
+    // Publish debug_key_value as before
+    publish(node_id, &report);
 
-	publish(msg.getSrcNodeID().get(), &report);
+    // Check and publish FlowrateRaw
+    if (strncmp(report.key, "FM", 2) == 0) {
+        _flowrate_report.timestamp = hrt_absolute_time();
+        _flowrate_report.node_id = node_id;
+        _flowrate_report.flowrate = msg.value;
+
+        _to_flowrate_raw.publish(_flowrate_report);
+
+    // Check and publish WeightRaw
+    } else if (strncmp(report.key, "WH", 2) == 0) {
+        _weight_report.timestamp = hrt_absolute_time();
+        _weight_report.node_id = node_id;
+        _weight_report.weight = msg.value;
+
+        _to_weight_raw.publish(_weight_report);
+    }
 }
+
 
 int UavcanDebugKeyValueBridge::init_driver(uavcan_bridge::Channel *channel) {
 	return PX4_OK;

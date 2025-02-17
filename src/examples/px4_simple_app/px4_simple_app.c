@@ -33,9 +33,9 @@
 
 /**
  * @file px4_simple_app.c
- * Minimal application example for PX4 autopilot
+ * Spraying Simulator Debug App
  *
- * @author Example User <mail@example.com>
+ * @author Y. Caglar <yilmaz.caglar@tubitak.gov.tr>
  */
 
 #include <px4_platform_common/px4_config.h>
@@ -47,84 +47,106 @@
 #include <poll.h>
 #include <string.h>
 #include <math.h>
+#include <signal.h>
 
 #include <uORB/uORB.h>
-#include <uORB/topics/vehicle_acceleration.h>
-#include <uORB/topics/vehicle_attitude.h>
+#include <uORB/topics/actuator_outputs.h>
+#include <uORB/topics/debug_key_value.h>
 
-__EXPORT int px4_simple_app_main(int argc, char *argv[]);
+static volatile bool should_exit = false;
 
-int px4_simple_app_main(int argc, char *argv[])
+void signal_handler(int signum)
 {
-	PX4_INFO("Hello Sky!");
+    should_exit = true;
+}
 
-	/* subscribe to vehicle_acceleration topic */
-	int sensor_sub_fd = orb_subscribe(ORB_ID(vehicle_acceleration));
-	/* limit the update rate to 5 Hz */
-	orb_set_interval(sensor_sub_fd, 200);
+__EXPORT int px4_simple_app_main(int b, char *c[]);
 
-	/* advertise attitude topic */
-	struct vehicle_attitude_s att;
-	memset(&att, 0, sizeof(att));
-	orb_advert_t att_pub = orb_advertise(ORB_ID(vehicle_attitude), &att);
+static float d(float e, float f);
 
-	/* one could wait for multiple topics with this technique, just using one here */
-	px4_pollfd_struct_t fds[] = {
-		{ .fd = sensor_sub_fd,   .events = POLLIN },
-		/* there could be more file descriptors here, in the form like:
-		 * { .fd = other_sub_fd,   .events = POLLIN },
-		 */
-	};
+int px4_simple_app_main(int b, char *c[])
+{
+    PX4_INFO("Init...");
 
-	int error_counter = 0;
+    // Register signal handler
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
 
-	for (int i = 0; i < 5; i++) {
-		/* wait for sensor update of 1 file descriptor for 1000 ms (1 second) */
-		int poll_ret = px4_poll(fds, 1, 1000);
+    int g = orb_subscribe_multi(ORB_ID(actuator_outputs), 1);
+    orb_set_interval(g, 100);
 
-		/* handle the poll result */
-		if (poll_ret == 0) {
-			/* this means none of our providers is giving us data */
-			PX4_ERR("Got no data within a second");
+    struct debug_key_value_s h;
+    memset(&h, 0, sizeof(h));
+    orb_advert_t i = orb_advertise(ORB_ID(debug_key_value), &h);
 
-		} else if (poll_ret < 0) {
-			/* this is seriously bad - should be an emergency */
-			if (error_counter < 10 || error_counter % 50 == 0) {
-				/* use a counter to prevent flooding (and slowing us down) */
-				PX4_ERR("ERROR return value from poll(): %d", poll_ret);
-			}
+    float j = 10000.0f;
+    float k = 0.1f;
+    int l = 0;
 
-			error_counter++;
+    while (j > 0.0f && !should_exit) {
+        usleep(100000);
 
+        struct actuator_outputs_s m;
+        if (orb_copy(ORB_ID(actuator_outputs), g, &m) == PX4_OK) {
+		if (orb_copy(ORB_ID(actuator_outputs), g, &m) == PX4_OK) {
+    			// PX4_INFO("Data received.");
 		} else {
-
-			if (fds[0].revents & POLLIN) {
-				/* obtained data for the first file descriptor */
-				struct vehicle_acceleration_s accel;
-				/* copy sensors raw data into local buffer */
-				orb_copy(ORB_ID(vehicle_acceleration), sensor_sub_fd, &accel);
-				PX4_INFO("Accelerometer:\t%8.4f\t%8.4f\t%8.4f",
-					 (double)accel.xyz[0],
-					 (double)accel.xyz[1],
-					 (double)accel.xyz[2]);
-
-				/* set att and publish this information for other apps
-				 the following does not have any meaning, it's just an example
-				*/
-				att.q[0] = accel.xyz[0];
-				att.q[1] = accel.xyz[1];
-				att.q[2] = accel.xyz[2];
-
-				orb_publish(ORB_ID(vehicle_attitude), att_pub, &att);
-			}
-
-			/* there could be more file descriptors here, in the form like:
-			 * if (fds[1..n].revents & POLLIN) {}
-			 */
+    			// PX4_WARN("No new data available.");
 		}
-	}
 
-	PX4_INFO("exiting");
+            float n = 2*m.output[4];
+            float o = 2*m.output[5];
 
-	return 0;
+            float p = (n >= 0.0f) ? d(n, k) : 0.0f;
+            float q = (o >= 0.0f) ? d(o, k) : 0.0f;
+
+            float r = p + q;
+            float s = r * k;
+
+            j = fmaxf(j - s, 0.0f);
+
+            if (l == 0) {
+                h.value = j;
+                memcpy(&h.key, "WH", 2);
+            } else {
+                h.value = r;
+                memcpy(&h.key, "FM", 2);
+            }
+
+            // PX4_INFO("Publishing key: %s, value: %f", h.key, (double)h.value);
+	    orb_publish(ORB_ID(debug_key_value), i, &h);
+	    // PX4_INFO("Published successfully.");
+            l = 1 - l;
+        }
+    }
+    PX4_INFO("Volume reached 0. Exiting.");
+
+    // Cleanup
+    orb_unsubscribe(g);
+    orb_unadvertise(i);
+
+    PX4_INFO("Exit.");
+    return 0;
+}
+
+static float d(float e, float f)
+{
+    float g = 0.0f;
+
+    if (e <= 1000.0f) {
+        g = 0.0f;
+    } else if (e > 1000.0f && e <= 1200.0f) {
+        g = 30.0f * ((e - 1000.0f) / 200.0f);
+    } else if (e > 1200.0f && e <= 1400.0f) {
+        g = 51.5f + (30.0f - 51.5f) * ((1400.0f - e) / 200.0f);
+    } else if (e > 1400.0f && e <= 1850.0f) {
+        float h = -2.78e-6f;
+        float i = 0.0917f;
+        float j = -86.41f;
+        g = h * e * e + i * e + j;
+    } else if (e > 1850.0f && e <= 2000.0f) {
+        g = 67.212f + (80.0f - 67.212f) * ((e - 1850.0f) / 150.0f);
+    }
+
+    return g;
 }

@@ -35,7 +35,7 @@
 WorkItemExample::WorkItemExample() :
 	ModuleParams(nullptr),
 	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::test1),
-	_actuator_outputs_sub(this, ORB_ID(actuator_outputs)) // Initialize the subscription
+	_actuator_outputs_sub(this, ORB_ID(actuator_outputs),1) // Initialize the subscription
 {
 }
 
